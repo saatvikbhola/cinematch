@@ -120,7 +120,7 @@ def fetch_movie_ids(count: int, skip_ids: set[int] | None = None) -> list[int]:
                 print(f"    Error on page {page} of {endpoint}: {e}")
                 break
 
-        endpoint_elapsed = time.time()
+        endpoint_elapsed = time.time() - endpoint_start
         print(f"  done {endpoint}: +{endpoint_new} IDs in {endpoint_elapsed:.1f}s (total unique: {len(movie_ids)})")
 
     movie_ids_list = list(movie_ids)[:count]

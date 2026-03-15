@@ -32,7 +32,7 @@ def _format_results(raw_results, query_time: float = 0.0) -> list[dict]:
     
     # --- DEBUG: Log raw results from Endee ---
     print(f"\n{'='*60}")
-    print(f"🔍 RAW ENDEE RESULTS ({len(raw_results)} results) — Query took {query_time*1000:.1f}ms")
+    print(f"RAW ENDEE RESULTS ({len(raw_results)} results) - Query took {query_time*1000:.1f}ms")
     print(f"{'='*60}")
     for i, r in enumerate(raw_results[:5]):  # Log first 5
         if isinstance(r, dict):
@@ -175,6 +175,8 @@ def search_with_filters(
     # we need more raw results to surface them reliably.
     fetch_k = max(100, top_k * 5)
 
+    print(f"   Endee Filter: {filters if filters else None}")
+
     try:
         t0 = time.perf_counter()
         results = index.query(
@@ -200,6 +202,7 @@ def search_with_filters(
     # Client-side filtering for array fields (genres, production_companies)
     # and safety-net for scalar fields already handled server-side
     formatted = _format_results(results, query_time=query_time)
+    print(f"   Fetched {len(formatted)} results from Endee")
     
     # --- Exact Match Reranking ---
     # SPLADE often breaks unique names ("Timothée Chalamet") into subword tokens ("tim", "##oth", etc.)
@@ -238,16 +241,23 @@ def search_with_filters(
     for m in formatted:
         m["similarity"] = min(1.0, m["sort_score"])
         del m["sort_score"]
+    
+    print(f"   After reranking: {len(formatted)} results")
 
     if genres:
         formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
+        print(f"   After genres filter ({genres}): {len(formatted)} results")
     if language and language != "Any":
         formatted = [m for m in formatted if m["language"] == language]
+        print(f"   After language filter ({language}): {len(formatted)} results")
     if production_companies:
         formatted = [
             m for m in formatted
             if any(pc.lower() in m.get("production_companies", "").lower() for pc in production_companies)
         ]
+        print(f"   After production_companies filter ({production_companies}): {len(formatted)} results")
+
+    print(f"   Final results returned: {len(formatted[:top_k])}")
 
     return formatted[:top_k]
 

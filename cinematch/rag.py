@@ -71,6 +71,7 @@ def retrieve_from_endee(
     # Generate sparse embedding for keyword matching
     sparse_indices, sparse_values = get_sparse_embedding(search_text)
 
+    # --- DEBUG: Raw Log ---
     print(f"\nRAG RETRIEVAL")
     print(f"   Question: '{question}'")
     if taste_search_query:
@@ -102,6 +103,8 @@ def retrieve_from_endee(
     # Always over-fetch to ensure a deep semantic pool for client-side filtering
     # Studio names like "A24" are weak semantic signals compared to movie plots
     fetch_k = max(100, top_k * 5)
+
+    print(f"   Endee Filter: {filters if filters else None}")
 
     results = index.query(
         vector=query_vector,

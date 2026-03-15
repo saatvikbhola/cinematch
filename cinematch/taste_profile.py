@@ -109,9 +109,9 @@ def generate_taste_profile(api_key: str, taste_summary: dict) -> str:
     model = genai.GenerativeModel(GEMINI_MODEL)
 
     # Build the prompt
-    loved_str = "\n".join([f"  - {m['name']} ({m['year']}) — ⭐ {m['rating']}/5" for m in taste_summary["loved"]])
-    disliked_str = "\n".join([f"  - {m['name']} ({m['year']}) — ⭐ {m['rating']}/5" for m in taste_summary["disliked"]])
-    reviews_str = "\n".join([f"  - {r['name']}: \"{r['review']}\" (⭐ {r['rating']}/5)" for r in taste_summary["reviews"]])
+    loved_str = "\n".join([f"  - {m['name']} ({m['year']}) - {m['rating']}/5" for m in taste_summary["loved"]])
+    disliked_str = "\n".join([f"  - {m['name']} ({m['year']}) - {m['rating']}/5" for m in taste_summary["disliked"]])
+    reviews_str = "\n".join([f"  - {r['name']}: \"{r['review']}\" ({r['rating']}/5)" for r in taste_summary["reviews"]])
     watchlist_str = "\n".join([f"  - {m['name']} ({m['year']})" for m in taste_summary["watchlist"]])
 
     prompt = f"""You are a film critic and taste analyst. Analyze this person's Letterboxd viewing history and create a detailed taste profile.

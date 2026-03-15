@@ -122,7 +122,7 @@ def _get_splade() -> tuple[AutoModelForMaskedLM, AutoTokenizer]:
              _splade_model = _splade_model.to("cuda")
              
         _splade_model.eval()
-        print("✅ SPLADE loaded")
+        print("SPLADE loaded")
     return _splade_model, _splade_tokenizer
 
 def get_sparse_embedding(text: str) -> tuple[list[int], list[float]]:
