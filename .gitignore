@@ -1,0 +1,34 @@
+# Environment variables (API keys)
+.env
+api.text
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data cache
+cinematch/data_cache/
+cinematch/*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+endee-data/
