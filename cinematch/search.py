@@ -229,12 +229,15 @@ def search_with_filters(
         if query_lower in m["keywords"].lower():
             bump += 0.05
             
-        if bump > 0:
-            # Apply bump but cap at 1.0
-            m["similarity"] = min(1.0, m["similarity"] + bump)
+        m["sort_score"] = m["similarity"] + bump
 
-    # Re-sort after bumping
-    formatted.sort(key=lambda x: x["similarity"], reverse=True)
+    # Re-sort using uncapped score so exact matched items jump to the very top
+    formatted.sort(key=lambda x: x["sort_score"], reverse=True)
+    
+    # Cap similarity at 1.0 for the UI and cleanup
+    for m in formatted:
+        m["similarity"] = min(1.0, m["sort_score"])
+        del m["sort_score"]
 
     if genres:
         formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
