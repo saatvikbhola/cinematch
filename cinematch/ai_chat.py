@@ -189,6 +189,7 @@ Return a JSON object with these fields (omit fields that aren't mentioned or imp
 
 - "genres": list of genres if mentioned (use TMDb genre names: Action, Adventure, Animation, Comedy, Crime, Documentary, Drama, Family, Fantasy, History, Horror, Music, Mystery, Romance, Science Fiction, TV Movie, Thriller, War, Western)
 - "production_companies": list of studios or production companies if mentioned (e.g., A24, Pixar, Marvel Studios)
+- "people": list of specific people (actors, directors, writers) mentioned in the query (e.g., ["Timothée Chalamet", "Christopher Nolan", "Zendaya"]).
 - "min_year": earliest year if mentioned
 - "max_year": latest year if mentioned  
 - "min_rating": minimum rating (on 10 scale) if mentioned

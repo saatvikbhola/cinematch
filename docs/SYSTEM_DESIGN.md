@@ -582,6 +582,7 @@ Return a JSON object with these fields (omit fields that aren't mentioned or imp
   6. If in doubt, KEEP the word. Over-preserving is always better than over-stripping.
 - "genres": list of genres if mentioned (use TMDb genre names)
 - "production_companies": list of studios if mentioned (e.g., A24, Pixar)
+- "people": list of specific people (actors, directors) mentioned
 - "min_year": earliest year if mentioned
 - "max_year": latest year if mentioned  
 - "min_rating": minimum rating (on 10 scale) if mentioned
@@ -602,20 +603,31 @@ Return ONLY valid JSON, no markdown formatting or explanation."""
         return {"refined_query": query}
 ```
 
-**Example:** The query *"highly rated Korean thrillers from the 2010s"* gets decomposed into:
+**Example:** The query *"movies that have Timothée Chalamet in them"* gets decomposed into:
 
 ```json
 {
-  "refined_query": "intense thrillers",
-  "genres": ["Thriller"],
-  "language": "ko",
-  "min_year": 2010,
-  "max_year": 2019,
-  "min_rating": 7.0
+  "refined_query": "movies that have Timothée Chalamet in them",
+  "people": ["Timothée Chalamet"]
 }
 ```
 
-The `refined_query` goes to Endee for semantic search, while the extracted fields become Endee filter parameters.
+The `refined_query` goes to Endee for semantic search, while the extracted fields become Endee filter parameters or are used for client-side boosting.
+
+### Exact Match Reranking
+
+Because our sparse vector model (SPLADE) operates on subword tokens, it can sometimes disproportionately weight common subsets of a unique string. For example, a search for actor "Timothée Chalamet" might highly rank a movie because a character is named "Tim". 
+
+To counteract this, the `search.py` layer applies an **Exact Match Reranking** step. Any `people` extracted by the AI (`ai_filters.get("people")`) are explicitly checked as literal substrings against the retrieved movies' `cast` and `director` metadata fields. 
+
+```python
+# From search.py
+if people:
+    for person in people:
+        person_lower = person.lower()
+        if person_lower in m["cast"].lower() or person_lower in m["director"].lower():
+            bump += 1.0  # Massive boost guarantees the exact match ranks highest
+```
 
 ### Filter Merging Strategy
 

@@ -211,6 +211,7 @@ with tab_search:
                     language=final_lang,
                     production_companies=list(merged_companies) if merged_companies else None,
                     status=selected_status if selected_status != "Any" else None,
+                    people=ai_filters.get("people"),
                     top_k=20,
                 )
                 st.session_state.search_time = time.perf_counter() - t0

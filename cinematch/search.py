@@ -129,6 +129,7 @@ def search_with_filters(
     language: str | None = None,
     production_companies: list[str] | None = None,
     status: str | None = None,
+    people: list[str] | None = None,
     top_k: int = 20,
 ) -> list[dict]:
     """
@@ -199,6 +200,42 @@ def search_with_filters(
     # Client-side filtering for array fields (genres, production_companies)
     # and safety-net for scalar fields already handled server-side
     formatted = _format_results(results, query_time=query_time)
+    
+    # --- Exact Match Reranking ---
+    # SPLADE often breaks unique names ("Timothée Chalamet") into subword tokens ("tim", "##oth", etc.)
+    # and weights common tokens too highly (e.g., matching a character named "Tim").
+    # To fix this, we apply a dynamic priority boost to the normalized similarity if the user asked 
+    # for a specific person and they appear in the movie's cast/director fields.
+    query_lower = query.lower()
+    for m in formatted:
+        bump = 0.0
+        
+        # Boost for explicitly extracted people (actors/directors)
+        if people:
+            for person in people:
+                person_lower = person.lower()
+                if person_lower in m["cast"].lower() or person_lower in m["director"].lower():
+                    bump += 1.0  # Guarantees the movie is ranked above non-exact semantic matches
+        
+        # High value: exact title match
+        if query_lower in m["title"].lower():
+            bump += 0.10
+            
+        # Medium value: director match
+        if query_lower in m["director"].lower():
+            bump += 0.10
+            
+        # Medium value: keywords match
+        if query_lower in m["keywords"].lower():
+            bump += 0.05
+            
+        if bump > 0:
+            # Apply bump but cap at 1.0
+            m["similarity"] = min(1.0, m["similarity"] + bump)
+
+    # Re-sort after bumping
+    formatted.sort(key=lambda x: x["similarity"], reverse=True)
+
     if genres:
         formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
     if language and language != "Any":
