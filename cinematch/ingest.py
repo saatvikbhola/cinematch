@@ -120,8 +120,8 @@ def fetch_movie_ids(count: int, skip_ids: set[int] | None = None) -> list[int]:
                 print(f"    Error on page {page} of {endpoint}: {e}")
                 break
 
-        endpoint_elapsed = time.time() - endpoint_start
-        print(f"  ✓ {endpoint}: +{endpoint_new} IDs in {endpoint_elapsed:.1f}s (total unique: {len(movie_ids)})")
+        endpoint_elapsed = time.time()
+        print(f"  done {endpoint}: +{endpoint_new} IDs in {endpoint_elapsed:.1f}s (total unique: {len(movie_ids)})")
 
     movie_ids_list = list(movie_ids)[:count]
     print(f"Got {len(movie_ids_list)} unique movie IDs")
@@ -274,7 +274,7 @@ def create_endee_index(client: Endee):
     """Create the movies index in Endee (skip if exists)."""
     try:
         client.get_index(name=ENDEE_INDEX_NAME)
-        print(f"Index '{ENDEE_INDEX_NAME}' already exists")
+        print(f"UPSERTING TO ENDEE INDEX: '{ENDEE_INDEX_NAME}' already exists")
     except Exception:
         print(f"Creating index '{ENDEE_INDEX_NAME}' ({EMBEDDING_DIMENSION}d, {SPACE_TYPE})...")
         client.create_index(
@@ -320,10 +320,10 @@ def index_movies(movies: list[dict], chunk_size: int = 50):
             new_movies.append(m)
 
     if not new_movies:
-        print(f"\n✅ All {len(movies)} movies are already indexed. Nothing to do!")
+        print(f"\nAll {len(movies)} movies are already indexed. Nothing to do!")
         return
 
-    print(f"\n📊 {len(already_indexed)} already indexed, {len(new_movies)} new to index (skipping duplicates)")
+    print(f"\n{len(already_indexed)} already indexed, {len(new_movies)} new to index (skipping duplicates)")
 
     total = len(new_movies)
     total_start = time.time()

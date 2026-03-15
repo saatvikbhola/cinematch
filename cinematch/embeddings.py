@@ -14,9 +14,9 @@ def _get_model() -> SentenceTransformer:
     """Lazy-load the embedding model."""
     global _model
     if _model is None:
-        print(f"🔄 Loading embedding model: {EMBEDDING_MODEL}")
+        print(f"Loading embedding model: {EMBEDDING_MODEL}")
         _model = SentenceTransformer(EMBEDDING_MODEL)
-        print(f"✅ Model loaded ({_model.get_sentence_embedding_dimension()}d)")
+        print(f"Model loaded ({_model.get_sentence_embedding_dimension()}d)")
     return _model
 
 
@@ -112,7 +112,7 @@ def _get_splade() -> tuple[AutoModelForMaskedLM, AutoTokenizer]:
     """Lazy-load the SPLADE model."""
     global _splade_model, _splade_tokenizer
     if _splade_model is None:
-        print("🔄 Loading SPLADE sparse model: naver/splade-cocondenser-ensembledistil")
+        print("Loading SPLADE sparse model: naver/splade-cocondenser-ensembledistil")
         model_id = "naver/splade-cocondenser-ensembledistil"
         _splade_tokenizer = AutoTokenizer.from_pretrained(model_id)
         _splade_model = AutoModelForMaskedLM.from_pretrained(model_id)

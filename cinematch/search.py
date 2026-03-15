@@ -57,7 +57,7 @@ def _format_results(raw_results, query_time: float = 0.0) -> list[dict]:
     if max_score <= 0:
         max_score = 1.0
     
-    print(f"📊 Score normalization: max_raw={max_score:.6f}")
+    print(f"Score normalization: max_raw={max_score:.6f}")
 
     for idx, r in enumerate(raw_results):
         meta = r.get("meta", {}) if isinstance(r, dict) else {}
@@ -97,8 +97,8 @@ def _format_results(raw_results, query_time: float = 0.0) -> list[dict]:
         movies.append(movie)
     
     # DEBUG: Show normalized scores
-    for m in movies[:5]:
-        print(f"  ✅ {m['title']} | raw={m['raw_similarity']:.6f} → normalized={m['similarity']:.0%}")
+    for m in movies[:10]:
+        print(f"  {m['title']} ({m['year']}) | raw={m['raw_similarity']:.6f} -> normalized={m['similarity']:.0%}")
     
     return movies
 
@@ -142,7 +142,7 @@ def search_with_filters(
     sparse_indices, sparse_values = get_sparse_embedding(query)
     
     # --- DEBUG: Log query embedding info ---
-    print(f"\n🔍 HYBRID SEARCH DEBUG")
+    print(f"\nHYBRID SEARCH DEBUG")
     print(f"   Query: '{query}'")
     print(f"   Dense vector dim: {len(query_vector)}")
     print(f"   Sparse indices count: {len(sparse_indices)}")
@@ -186,7 +186,7 @@ def search_with_filters(
         )
         query_time = time.perf_counter() - t0
     except Exception as e:
-        print(f"⚠️ Filtered query failed ({e}), falling back to unfiltered")
+        print(f"Filtered query failed ({e}), falling back to unfiltered")
         # Fallback to unfiltered if filter format isn't supported
         t0 = time.perf_counter()
         results = index.query(

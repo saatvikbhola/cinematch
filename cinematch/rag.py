@@ -71,7 +71,7 @@ def retrieve_from_endee(
     # Generate sparse embedding for keyword matching
     sparse_indices, sparse_values = get_sparse_embedding(search_text)
 
-    print(f"\n🔎 RAG RETRIEVAL")
+    print(f"\nRAG RETRIEVAL")
     print(f"   Question: '{question}'")
     if taste_search_query:
         print(f"   Taste Query: '{taste_search_query[:50]}...'")
@@ -133,7 +133,7 @@ def _build_context(movies: list[dict]) -> str:
     for i, m in enumerate(movies, 1):
         context_parts.append(
             f"[{i}] {m['title']} ({m.get('year', 'N/A')})\n"
-            f"    Rating: ⭐ {m.get('rating', 'N/A')}/10\n"
+            f"    Rating: {m.get('rating', 'N/A')}/10\n"
             f"    Genres: {m.get('genres', 'N/A')}\n"
             f"    Director: {m.get('director', 'N/A')}\n"
             f"    Cast: {m.get('cast', 'N/A')}\n"
