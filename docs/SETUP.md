@@ -36,7 +36,7 @@
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/cinematch.git
+git clone https://github.com/saatvikbhola/cinematch.git
 cd cinematch
 ```
 
@@ -191,7 +191,7 @@ def get_backdrop_url(backdrop_path: str) -> str:
 
 ```bash
 cd cinematch
-pip install -r requirements.txt
+uv sync
 ```
 
 **Dependencies installed:**
@@ -209,11 +209,11 @@ pip install -r requirements.txt
 | `Pillow` | Image handling |
 | `tenacity` | Retry logic for API calls |
 
-**With `uv` (alternative):**
+**With `pip` (alternative):**
 
 ```bash
 cd cinematch
-uv sync
+pip install -r requirements.txt
 ```
 
 > **First run note:** The first execution will download two ML models (~500MB total):
@@ -238,21 +238,21 @@ This is the critical step that populates Endee with movie vectors. The ingestion
 
 ```bash
 # Fetch and index 5,000 movies (default)
-python ingest.py
+uv run python ingest.py
 ```
 
 ### Quick Test (fewer movies)
 
 ```bash
 # Fetch just 100 movies for a quick test
-python ingest.py --count 100
+uv run python ingest.py --count 100
 ```
 
 ### Custom Configuration
 
 ```bash
 # Full control over the pipeline
-python ingest.py --count 5000 --workers 8 --chunk-size 50
+uv run python ingest.py --count 5000 --workers 8 --chunk-size 50
 ```
 
 ### CLI Arguments
@@ -269,7 +269,7 @@ python ingest.py --count 5000 --workers 8 --chunk-size 50
 If you've already fetched movies and want to re-embed/re-index:
 
 ```bash
-python ingest.py --skip-fetch
+uv run python ingest.py --skip-fetch
 ```
 
 ### Expected Output
@@ -318,7 +318,7 @@ This is tracked via `data_cache/indexed_ids.json`.
 ## Step 6: Launch the Application
 
 ```bash
-streamlit run app.py
+uv run streamlit run app.py
 ```
 
 Open **http://localhost:8501** in your browser.
@@ -352,9 +352,9 @@ docker compose up -d
 
 # Run the Streamlit app locally
 cd cinematch
-pip install -r requirements.txt
-python ingest.py --count 100
-streamlit run app.py
+uv sync
+uv run python ingest.py --count 100
+uv run streamlit run app.py
 ```
 
 ### Option 2: Full Docker Build

@@ -243,16 +243,15 @@ def index_movies(movies: list[dict], chunk_size: int = 50):
                     "popularity": movie.get("popularity", 0),
                 },
                 "filter": {                                # Server-side filterable fields
-                    "genres": genres_list,
                     "language": movie["language"],
-                    "production_companies": movie.get("production_companies", []),
-                    "production_countries": movie.get("production_countries", []),
                     "status": movie.get("status", ""),
-                    "year": movie["year"],
+                    "year_norm": max(0, min(999, movie["year"] - 1900)),
                     "rating": movie["rating"],
                     "vote_count": movie["vote_count"],
                     "runtime": movie["runtime"],
                     "popularity": movie.get("popularity", 0),
+                    # Dynamic boolean flags for genres (e.g., genre_action: "yes")
+                    # Dynamic boolean flags for companies (e.g., company_a24: "yes")
                 },
             })
 
@@ -277,6 +276,8 @@ def index_movies(movies: list[dict], chunk_size: int = 50):
 - **Incremental indexing** via `indexed_ids.json` — re-running `ingest.py` only processes new movies
 - **Aggressive memory cleanup** (`gc.collect()`) after each chunk
 - **Separate `meta` vs `filter` fields** — `meta` stores display strings, `filter` stores structured data for Endee's filter engine
+- **Dynamic boolean flags** — genres and production companies are flattened into scalar flags (e.g., `genre_action: "yes"`, `company_a24: "yes"`) for efficient server-side `$eq` filtering
+- **Normalized year** — years are stored as `year_norm = year - 1900` for `$range` filtering
 
 ---
 
@@ -435,13 +436,35 @@ def retrieve_from_endee(
     )
 
     formatted = _format_results(results)
-    # ... client-side filtering ...
     return formatted[:top_k]
 ```
 
 **Why hybrid matters:** A query like *"Leonardo DiCaprio sci-fi"* needs both:
 - **Dense vector** to match the sci-fi *vibe* (semantics)
 - **Sparse vector** to match *"Leonardo DiCaprio"* exactly (keywords)
+
+
+---
+
+### 7.1 Client-Side Reranking for Relevancy
+
+While Endee's hybrid search is powerful, CineMatch applies a final client-side reranking step to solve specific edge cases like subword tokenization in SPLADE (where a search for "Timothée" might match a character named "Tim").
+
+```python
+# search.py — Exact match reranking logic
+# Boost for extracted people (actors/directors)
+if people:
+    for person in people:
+        if person.lower() in movie["cast"].lower() or person.lower() in movie["director"].lower():
+            bump += 1.0  # Guarantees the movie is ranked above non-exact semantic matches
+
+# Additional boosts for exact title or director matches
+if query.lower() in movie["title"].lower(): bump += 0.10
+if query.lower() in movie["director"].lower(): bump += 0.10
+if query.lower() in movie["keywords"].lower(): bump += 0.05
+```
+
+This ensures that when a user searches for a specific person or title, the most relevant documents jump to the very top, while still maintaining high-quality semantic results below them.
 
 ---
 
@@ -464,19 +487,34 @@ if status and status != "Any":
 
 ### `$range` — Numeric Range
 
-Used for year and rating ranges:
+Used for year and rating ranges. Note that years are normalized (year - 1900) for storage:
 
 ```python
 # search.py — range filters
-if min_year and max_year:
-    filters.append({"year": {"$range": [min_year, max_year]}})    # e.g., [2010, 2020]
-elif min_year:
-    filters.append({"year": {"$range": [min_year, 2026]}})
-elif max_year:
-    filters.append({"year": {"$range": [1900, max_year]}})
+if min_year or max_year:
+    norm_min = max(0, min_year - 1900) if min_year else 0
+    norm_max = min(999, max_year - 1900) if max_year else 999
+    filters.append({"year_norm": {"$range": [norm_min, norm_max]}})
 
 if min_rating:
-    filters.append({"rating": {"$range": [min_rating, 10.0]}})    # e.g., [7.0, 10.0]
+    filters.append({"rating": {"$range": [min_rating, 10.0]}})
+```
+
+### Dynamic Flags — Genre & Company Filtering
+
+Since Endee’s `$in` operator works on scalar fields but not natively on array-contains patterns, CineMatch uses **dynamic boolean flags** created during ingestion (e.g., `genre_action: "yes"`, `company_a24: "yes"`). This allows for highly performant server-side filtering of millions of documents.
+
+```python
+# search.py — Dynamic flag matching
+if genres:
+    for g in genres:
+        safe_genre = g.lower().replace(" ", "_")
+        filters.append({f"genre_{safe_genre}": {"$eq": "yes"}})
+
+if production_companies:
+    for pc in production_companies:
+        safe_company = pc.lower().replace(" ", "_")
+        filters.append({f"company_{safe_company}": {"$eq": "yes"}})
 ```
 
 ### RAG-Specific Default Filter
@@ -511,10 +549,10 @@ results = index.query(
 
 ### Graceful Fallback
 
-If filters cause an error (e.g., unsupported format), CineMatch falls back to unfiltered search:
+If hybrid search fails (e.g., sparse vector format issue), CineMatch falls back to dense-only search:
 
 ```python
-# search.py — filter fallback
+# search.py — hybrid → dense-only fallback
 try:
     results = index.query(
         vector=query_vector, 
@@ -524,13 +562,16 @@ try:
         filter=filters if filters else None,
     )
 except Exception as e:
-    print(f"⚠️ Filtered query failed ({e}), falling back to unfiltered")
-    results = index.query(
-        vector=query_vector, 
-        sparse_indices=sparse_indices,
-        sparse_values=sparse_values,
-        top_k=fetch_k
-    )
+    print(f"Hybrid query failed ({e}), trying dense-only...")
+    try:
+        results = index.query(
+            vector=query_vector,
+            top_k=fetch_k,
+            filter=filters if filters else None,
+        )
+    except Exception as e2:
+        print(f"Dense query also failed ({e2})")
+        results = []
 ```
 
 ---
@@ -545,6 +586,20 @@ def _format_results(raw_results, query_time: float = 0.0) -> list[dict]:
     """Format Endee query results into clean movie dicts."""
     movies = []
     
+    # Extract raw similarity scores to find the max for normalization
+    raw_scores = []
+    for r in raw_results:
+        sim = 0.0
+        if hasattr(r, "similarity"):
+            sim = r.similarity
+        elif isinstance(r, dict):
+            sim = r.get("similarity", r.get("score", 0.0))
+        raw_scores.append(float(sim))
+    
+    max_score = max(raw_scores) if raw_scores else 1.0
+    if max_score <= 0:
+        max_score = 1.0
+
     for idx, r in enumerate(raw_results):
         meta = r.get("meta", {}) if isinstance(r, dict) else {}
 
@@ -556,14 +611,13 @@ def _format_results(raw_results, query_time: float = 0.0) -> list[dict]:
         else:
             doc_id = r.get("id", "")
 
-        # Normalize score
-        raw_score = getattr(r, "score", 0.0)
-        normalized_sim = (raw_score + 1) / 2 if SPACE_TYPE == "cosine" else raw_score
+        # Normalize similarity: scale relative to top result so best match ≈ 1.0
+        normalized_sim = raw_scores[idx] / max_score if max_score > 0 else 0.0
 
         movie = {
             "id": doc_id,
             "similarity": round(normalized_sim, 4),
-            "raw_similarity": raw_score,
+            "raw_similarity": round(raw_scores[idx], 6),
             "title": meta.get("title", "Unknown"),
             "overview": meta.get("overview", ""),
             "tagline": meta.get("tagline", ""),
@@ -577,7 +631,7 @@ def _format_results(raw_results, query_time: float = 0.0) -> list[dict]:
             "runtime": meta.get("runtime", 0),
             "language": meta.get("language", "en"),
             "poster_url": get_poster_url(meta.get("poster_path", "")),
-            "backdrop_url": get_backdrop_url(meta.get("backdrop_path", "")),
+            "backdrop_url": meta.get("backdrop_path", ""),
             "tmdb_id": meta.get("tmdb_id", 0),
             "production_companies": meta.get("production_companies", ""),
         }

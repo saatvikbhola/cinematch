@@ -7,6 +7,7 @@ using Gemini.
 """
 
 import google.generativeai as genai
+import time
 
 from config import GEMINI_MODEL, ENDEE_URL, ENDEE_INDEX_NAME
 from embeddings import embed_text, get_sparse_embedding
@@ -80,9 +81,8 @@ def retrieve_from_endee(
 
     index = _get_index()
 
-    # Build filter list for Endee
-    # NOTE: Endee's $in does NOT work on array-type filter fields (genres,
-    #       production_companies) — filtered client-side below instead.
+    # Build filter list for Endee using server-side $eq and $range.
+    # Genre and company filters use dynamic boolean flags (e.g., genre_action: "yes").
     filters = []
     if language and language != "Any":
         filters.append({"language": {"$eq": language}})
@@ -99,6 +99,18 @@ def retrieve_from_endee(
     # Default rating filter if none provided, otherwise use provided min_rating
     actual_min_rating = min_rating if min_rating is not None else 5.0
     filters.append({"rating": {"$range": [actual_min_rating, 10.0]}})
+    
+    # Server-side matching for dynamic genre flags
+    if genres:
+        for g in genres:
+            safe_genre = g.lower().replace(" ", "_")
+            filters.append({f"genre_{safe_genre}": {"$eq": "yes"}})
+
+    # Server-side matching for dynamic company flags
+    if production_companies:
+        for pc in production_companies:
+            safe_company = pc.lower().replace(" ", "_")
+            filters.append({f"company_{safe_company}": {"$eq": "yes"}})
 
     # Always over-fetch to ensure a deep semantic pool for client-side filtering
     # Studio names like "A24" are weak semantic signals compared to movie plots
@@ -106,25 +118,31 @@ def retrieve_from_endee(
 
     print(f"   Endee Filter: {filters if filters else None}")
 
-    results = index.query(
-        vector=query_vector,
-        sparse_indices=sparse_indices,
-        sparse_values=sparse_values,
-        top_k=fetch_k,
-        filter=filters if filters else None,
-    )
+    try:
+        t0 = time.perf_counter()
+        results = index.query(
+            vector=query_vector, 
+            sparse_indices=sparse_indices,
+            sparse_values=sparse_values,
+            top_k=fetch_k, 
+            filter=filters if filters else None,
+        )
+        print(f"   Fetched {len(results)} results from Endee (Hybrid)")
+    except Exception as e:
+        print(f"Hybrid query failed ({e}), trying dense-only...")
+        try:
+            t0 = time.perf_counter()
+            results = index.query(
+                vector=query_vector,
+                top_k=fetch_k,
+                filter=filters if filters else None,
+            )
+            print(f"   Fetched {len(results)} results from Endee (Dense Fallback)")
+        except Exception as e2:
+            print(f"Dense query also failed ({e2})")
+            results = []
 
     formatted = _format_results(results)
-
-    # Client-side filtering for array fields
-    if genres:
-        formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
-    if production_companies:
-        formatted = [
-            m for m in formatted
-            if any(pc.lower() in m.get("production_companies", "").lower() for pc in production_companies)
-        ]
-
     formatted = formatted[:top_k]
     print(f"   Retrieved {len(formatted)} movies from Endee")
     return formatted

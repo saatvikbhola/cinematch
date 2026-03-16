@@ -149,26 +149,33 @@ def search_with_filters(
     
     index = _get_index()
 
-    # Build filter list for Endee
-    # NOTE: Endee's $in does NOT work on array-type filter fields (genres,
-    #       production_companies) — it only matches scalars.  These are
-    #       filtered client-side below instead.
     filters = []
+    
     if language and language != "Any":
         filters.append({"language": {"$eq": language}})
     if status and status != "Any":
         filters.append({"status": {"$eq": status}})
 
-    # Server-side $range filters for year and rating
-    if min_year and max_year:
-        filters.append({"year": {"$range": [min_year, max_year]}})
-    elif min_year:
-        filters.append({"year": {"$range": [min_year, 2026]}})
-    elif max_year:
-        filters.append({"year": {"$range": [1900, max_year]}})
+    # Normalized server-side $range filters for year
+    if min_year or max_year:
+        norm_min = max(0, min_year - 1900) if min_year else 0
+        norm_max = min(999, max_year - 1900) if max_year else 999
+        filters.append({"year_norm": {"$range": [norm_min, norm_max]}})
 
     if min_rating:
         filters.append({"rating": {"$range": [min_rating, 10.0]}})
+
+    # Server-side matching for dynamic genre flags
+    if genres:
+        for g in genres:
+            safe_genre = g.lower().replace(" ", "_")
+            filters.append({f"genre_{safe_genre}": {"$eq": "yes"}})
+
+    # Server-side matching for dynamic company flags
+    if production_companies:
+        for pc in production_companies:
+            safe_company = pc.lower().replace(" ", "_")
+            filters.append({f"company_{safe_company}": {"$eq": "yes"}})
 
     # Always over-fetch to ensure a deep semantic pool for client-side filtering
     # Studio names like "A24" are weak semantic signals compared to movie plots, so
@@ -187,22 +194,23 @@ def search_with_filters(
             filter=filters if filters else None,
         )
         query_time = time.perf_counter() - t0
+        print(f"   Fetched {len(results)} results from Endee (Hybrid)")
     except Exception as e:
-        print(f"Filtered query failed ({e}), falling back to unfiltered")
-        # Fallback to unfiltered if filter format isn't supported
-        t0 = time.perf_counter()
-        results = index.query(
-            vector=query_vector, 
-            sparse_indices=sparse_indices,
-            sparse_values=sparse_values,
-            top_k=fetch_k
-        )
-        query_time = time.perf_counter() - t0
-
-    # Client-side filtering for array fields (genres, production_companies)
-    # and safety-net for scalar fields already handled server-side
+        print(f"Hybrid query failed ({e}), trying dense-only...")
+        try:
+            t0 = time.perf_counter()
+            results = index.query(
+                vector=query_vector,
+                top_k=fetch_k,
+                filter=filters if filters else None,
+            )
+            query_time = time.perf_counter() - t0
+            print(f"   Fetched {len(results)} results from Endee (Dense Fallback)")
+        except Exception as e2:
+             print(f"Dense query also failed ({e2})")
+             results = []
+             query_time = 0.0 # No query was successful
     formatted = _format_results(results, query_time=query_time)
-    print(f"   Fetched {len(formatted)} results from Endee")
     
     # --- Exact Match Reranking ---
     # SPLADE often breaks unique names ("Timothée Chalamet") into subword tokens ("tim", "##oth", etc.)
@@ -243,19 +251,6 @@ def search_with_filters(
         del m["sort_score"]
     
     print(f"   After reranking: {len(formatted)} results")
-
-    if genres:
-        formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
-        print(f"   After genres filter ({genres}): {len(formatted)} results")
-    if language and language != "Any":
-        formatted = [m for m in formatted if m["language"] == language]
-        print(f"   After language filter ({language}): {len(formatted)} results")
-    if production_companies:
-        formatted = [
-            m for m in formatted
-            if any(pc.lower() in m.get("production_companies", "").lower() for pc in production_companies)
-        ]
-        print(f"   After production_companies filter ({production_companies}): {len(formatted)} results")
 
     print(f"   Final results returned: {len(formatted[:top_k])}")
 

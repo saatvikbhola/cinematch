@@ -364,6 +364,28 @@ def index_movies(movies: list[dict], chunk_size: int = 50):
                 genres_list = []
                 for g in movie["genres"].split(","):
                     genres_list.append(g.strip())
+
+            # 1. Build the base normalized filter dictionary
+            movie_filters = {
+                "language": movie["language"],
+                "status": movie.get("status", ""),
+                "year_norm": max(0, min(999, movie["year"] - 1900)),
+                "rating": movie["rating"],
+                "vote_count": movie["vote_count"],
+                "runtime": movie["runtime"],
+                "popularity": movie.get("popularity", 0),
+            }
+
+            # 2. Flatten genres into scalar boolean flags
+            for g in genres_list:
+                safe_genre = g.lower().replace(" ", "_")
+                movie_filters[f"genre_{safe_genre}"] = "yes"
+
+            # 3. Flatten production companies into scalar boolean flags
+            for pc in movie.get("production_companies", []):
+                safe_company = pc.lower().replace(" ", "_")
+                movie_filters[f"company_{safe_company}"] = "yes"
+
             batch.append({
                 "id": f"tmdb_{movie['tmdb_id']}",
                 "vector": dense_vectors[j],
@@ -395,18 +417,7 @@ def index_movies(movies: list[dict], chunk_size: int = 50):
                     "tmdb_id": movie["tmdb_id"],
                     "popularity": movie.get("popularity", 0),
                 },
-                "filter": {
-                    "genres": genres_list,
-                    "language": movie["language"],
-                    "production_companies": movie.get("production_companies", []),
-                    "production_countries": movie.get("production_countries", []),
-                    "status": movie.get("status", ""),
-                    "year": movie["year"],
-                    "rating": movie["rating"],
-                    "vote_count": movie["vote_count"],
-                    "runtime": movie["runtime"],
-                    "popularity": movie.get("popularity", 0),
-                },
+                "filter": movie_filters,
             })
 
         try:

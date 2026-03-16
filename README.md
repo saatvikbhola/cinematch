@@ -152,13 +152,18 @@ Each movie is indexed with **both** dense and sparse vectors, plus structured me
     },
 
     "filter": {                              # Server-side filterable fields
-        "genres": ["Action", "Science Fiction", "Adventure"],
         "language": "en",
-        "year": 2010,
-        "rating": 8.4,
         "status": "Released",
-        "production_companies": ["Warner Bros. Pictures", "Legendary Entertainment"],
-        # ... structured filter fields
+        "year_norm": 110,                     # Normalized: 2010 - 1900
+        "rating": 8.4,
+        "vote_count": 35000,
+        "runtime": 148,
+        "popularity": 82.5,
+        "genre_action": "yes",                # Dynamic boolean flag
+        "genre_science_fiction": "yes",
+        "genre_adventure": "yes",
+        "company_warner_bros._pictures": "yes",
+        "company_legendary_entertainment": "yes",
     }
 }
 ```
@@ -176,8 +181,9 @@ results = index.query(
     top_k=100,                         # Over-fetch for client-side refinement
     filter=[                           # Server-side filters via Endee
         {"language": {"$eq": "en"}},
-        {"year": {"$range": [2000, 2025]}},
+        {"year_norm": {"$range": [100, 125]}},  # 2000-2025 normalized
         {"rating": {"$range": [7.0, 10.0]}},
+        {"genre_action": {"$eq": "yes"}},        # Dynamic genre flag
     ],
 )
 ```
@@ -262,7 +268,7 @@ endee-project/
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/cinematch.git
+git clone https://github.com/saatvikbhola/cinematch.git
 cd cinematch
 ```
 
@@ -290,20 +296,20 @@ ENDEE_URL=http://localhost:8080
 
 ```bash
 cd cinematch
-pip install -r requirements.txt
+uv sync
 ```
 
 ### Step 5: Ingest Movie Data
 
 ```bash
 # Fetch 5,000 movies from TMDb, generate embeddings, and index into Endee
-python ingest.py
+uv run python ingest.py
 
 # Quick test with fewer movies
-python ingest.py --count 100
+uv run python ingest.py --count 100
 
 # Adjust concurrency and batch sizes
-python ingest.py --count 5000 --workers 8 --chunk-size 50
+uv run python ingest.py --count 5000 --workers 8 --chunk-size 50
 ```
 
 The ingestion pipeline:
@@ -318,7 +324,7 @@ The ingestion pipeline:
 ### Step 6: Launch the App
 
 ```bash
-streamlit run app.py
+uv run streamlit run app.py
 ```
 
 Open `http://localhost:8501` in your browser. Enter your **Gemini API key** in the sidebar to unlock AI features.
@@ -400,7 +406,7 @@ This project showcases multiple Endee capabilities in a real-world application:
 | **Dense Vector Search** | 384-dim cosine similarity for semantic movie matching |
 | **Sparse Vector Search** | SPLADE 30,522-dim sparse vectors for keyword precision |
 | **Hybrid Queries** | Combined dense + sparse in single query calls |
-| **Payload Filtering** | `$eq` (language, status), `$range` (year, rating) server-side filters |
+| **Payload Filtering** | `$eq` (language, status, genre/company flags), `$range` (year_norm, rating) server-side filters |
 | **Metadata Storage** | 15+ metadata fields stored per document (title, cast, director, etc.) |
 | **Batch Upsert** | Memory-efficient chunked indexing of 5,000+ movies |
 | **Document Count** | Real-time database statistics displayed in UI |

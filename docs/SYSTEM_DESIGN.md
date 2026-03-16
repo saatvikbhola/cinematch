@@ -45,7 +45,7 @@ CineMatch follows a **retrieval-augmented** architecture where Endee serves as t
 │         │    │           Search Module (search.py)           │       │
 │         │    │  • Builds Endee queries with filters          │       │
 │         │    │  • Normalizes results                         │       │
-│         │    │  • Client-side array field filtering           │       │
+│         │    │  • Exact match reranking                      │       │
 │         │    └─────────────┬─────────────────────────────────┘       │
 │         │                  │                                         │
 │  ┌──────▼──────────────────▼─────────────────────────────────┐      │
@@ -307,21 +307,21 @@ batch.append({
         "popularity": movie.get("popularity", 0),
     },
     "filter": {                                # Server-side filterable fields
-        "genres": genres_list,                 # List for $in matching
-        "language": movie["language"],         # Scalar for $eq matching
-        "production_companies": movie.get("production_companies", []),
-        "production_countries": movie.get("production_countries", []),
+        "language": movie["language"],          # Scalar for $eq matching
         "status": movie.get("status", ""),
-        "year": movie["year"],                 # Numeric for $range
-        "rating": movie["rating"],             # Numeric for $range
+        "year_norm": max(0, min(999, movie["year"] - 1900)),  # Normalized for $range
+        "rating": movie["rating"],              # Numeric for $range
         "vote_count": movie["vote_count"],
         "runtime": movie["runtime"],
         "popularity": movie.get("popularity", 0),
+        # Dynamic boolean flags added in loops below:
+        # genre_action: "yes", genre_comedy: "yes", ...
+        # company_a24: "yes", company_pixar: "yes", ...
     },
 })
 ```
 
-**Key design decision:** Metadata (`meta`) and filters (`filter`) are separate in Endee. The `meta` payload stores human-readable strings (e.g., `"genres": "Action, Comedy"`) returned with search results. The `filter` field stores structured data (e.g., `"genres": ["Action", "Comedy"]`) used for server-side query filtering. This separation enables fast filtered retrieval without parsing strings at query time.
+**Key design decision:** Metadata (`meta`) and filters (`filter`) are separate in Endee. The `meta` payload stores human-readable strings (e.g., `"genres": "Action, Comedy"`) returned with search results. The `filter` field stores structured data used for server-side query filtering. Genres and production companies are stored as **dynamic boolean flags** (e.g., `genre_action: "yes"`, `company_pixar: "yes"`) instead of arrays, enabling efficient server-side `$eq` filtering. Years are stored as `year_norm` (year - 1900) for `$range` operations.
 
 ---
 
@@ -420,9 +420,8 @@ User Query
             │
             ▼
 ┌───────────────────────────┐
-│  Client-Side Refinement   │  ← Genre substring, production company
-│  (array fields Endee      │     matching, then trim to top_k
-│   can't filter natively)  │
+│  Combined Results         │  ← Final results returned
+│                           │     directly from Endee
 └───────────┬───────────────┘
             │
             ▼
@@ -445,11 +444,12 @@ def search_with_filters(
     language: str | None = None,
     production_companies: list[str] | None = None,
     status: str | None = None,
+    people: list[str] | None = None,
     top_k: int = 20,
 ) -> list[dict]:
     """
     Filtered semantic search — combines vector similarity with metadata filters.
-    Uses Endee's filter field for server-side filtering + client-side fallback.
+    Uses Endee's filter field for server-side filtering.
     """
     query_vector = embed_text(query)
     # Generate sparse vector for the query text
@@ -458,27 +458,34 @@ def search_with_filters(
     index = _get_index()
 
     # Build filter list for Endee
-    # NOTE: Endee's $in does NOT work on array-type filter fields (genres,
-    #       production_companies) — it only matches scalars.  These are
-    #       filtered client-side below instead.
     filters = []
     if language and language != "Any":
         filters.append({"language": {"$eq": language}})
     if status and status != "Any":
         filters.append({"status": {"$eq": status}})
 
-    # Server-side $range filters for year and rating
-    if min_year and max_year:
-        filters.append({"year": {"$range": [min_year, max_year]}})
-    elif min_year:
-        filters.append({"year": {"$range": [min_year, 2026]}})
-    elif max_year:
-        filters.append({"year": {"$range": [1900, max_year]}})
+    # Normalized server-side $range filters for year
+    if min_year or max_year:
+        norm_min = max(0, min_year - 1900) if min_year else 0
+        norm_max = min(999, max_year - 1900) if max_year else 999
+        filters.append({"year_norm": {"$range": [norm_min, norm_max]}})
 
     if min_rating:
         filters.append({"rating": {"$range": [min_rating, 10.0]}})
 
-    # Always over-fetch to ensure a deep semantic pool for client-side filtering
+    # Server-side matching for dynamic genre flags
+    if genres:
+        for g in genres:
+            safe_genre = g.lower().replace(" ", "_")
+            filters.append({f"genre_{safe_genre}": {"$eq": "yes"}})
+
+    # Server-side matching for dynamic company flags
+    if production_companies:
+        for pc in production_companies:
+            safe_company = pc.lower().replace(" ", "_")
+            filters.append({f"company_{safe_company}": {"$eq": "yes"}})
+
+    # Always over-fetch to ensure a deep semantic pool
     fetch_k = max(100, top_k * 5)
 
     try:
@@ -490,26 +497,18 @@ def search_with_filters(
             filter=filters if filters else None,
         )
     except Exception as e:
-        # Fallback to unfiltered if filter format isn't supported
-        results = index.query(
-            vector=query_vector, 
-            sparse_indices=sparse_indices,
-            sparse_values=sparse_values,
-            top_k=fetch_k
-        )
+        # Fallback to dense-only if hybrid fails
+        try:
+            results = index.query(
+                vector=query_vector,
+                top_k=fetch_k,
+                filter=filters if filters else None,
+            )
+        except Exception as e2:
+            results = []
 
-    # Client-side filtering for array fields (genres, production_companies)
     formatted = _format_results(results)
-    if genres:
-        formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
-    if language and language != "Any":
-        formatted = [m for m in formatted if m["language"] == language]
-    if production_companies:
-        formatted = [
-            m for m in formatted
-            if any(pc.lower() in m.get("production_companies", "").lower() for pc in production_companies)
-        ]
-
+    # ... exact match reranking applied here ...
     return formatted[:top_k]
 ```
 
@@ -574,15 +573,15 @@ Query: "{query}"
 Return a JSON object with these fields (omit fields that aren't mentioned or implied):
 - "refined_query": the semantic search text to use for vector similarity search. 
   CRITICAL RULES for refined_query:
-  1. Keep it as CLOSE to the original query as possible. Your job is to PRESERVE the vibe, not rewrite it.
-  2. Keep ALL mood/vibe/aesthetic words (e.g., 'cyberpunk', 'noir', 'dreamy', 'gritty', 'feel-good', 'dark')
-  3. Keep ALL movie/director/actor references (e.g., 'like Back to the Future', 'Wes Anderson style')
-  4. Keep ALL thematic descriptors (e.g., 'time travel', 'heist', 'coming of age', 'revenge')
-  5. ONLY remove pure filter tokens: explicit year numbers, rating numbers, and language names when used as a filter
-  6. If in doubt, KEEP the word. Over-preserving is always better than over-stripping.
+  1. Keep it as CLOSE to the original query as possible. Your job is to PRESERVE the vibe.
+  2. Keep ALL mood/vibe/aesthetic words (e.g., 'cyberpunk', 'noir', 'gritty', 'feel-good').
+  3. Keep ALL movie/director/actor references (e.g., 'like Back to the Future', 'Wes Anderson style').
+  4. Keep ALL thematic descriptors (e.g., 'time travel', 'heist', 'revenge').
+  5. ONLY remove pure filter tokens: explicit year numbers, rating numbers, and language names when used as a filter.
+  6. If in doubt, KEEP the word. Over-preserving is better than over-stripping.
 - "genres": list of genres if mentioned (use TMDb genre names)
 - "production_companies": list of studios if mentioned (e.g., A24, Pixar)
-- "people": list of specific people (actors, directors) mentioned
+- "people": list of specific people (actors, directors, writers) mentioned
 - "min_year": earliest year if mentioned
 - "max_year": latest year if mentioned  
 - "min_rating": minimum rating (on 10 scale) if mentioned
@@ -618,7 +617,12 @@ The `refined_query` goes to Endee for semantic search, while the extracted field
 
 Because our sparse vector model (SPLADE) operates on subword tokens, it can sometimes disproportionately weight common subsets of a unique string. For example, a search for actor "Timothée Chalamet" might highly rank a movie because a character is named "Tim". 
 
-To counteract this, the `search.py` layer applies an **Exact Match Reranking** step. Any `people` extracted by the AI (`ai_filters.get("people")`) are explicitly checked as literal substrings against the retrieved movies' `cast` and `director` metadata fields. 
+To counteract this, the `search.py` layer applies a dynamic **Exact Match Reranking** step to the results retrieved from Endee:
+
+1.  **People Boost (+1.0):** If specific `people` (actors/directors) were extracted by the AI, and they appear in the movie's `cast` or `director` metadata, the score gets a massive boost. This guarantees exact matches rank above non-exact semantic matches.
+2.  **Title Match (+0.1):** If the user's query text appears in the movie title.
+3.  **Director Match (+0.1):** if the query text appears in the director field.
+4.  **Keywords Match (+0.05):** If the query text appears in the keywords.
 
 ```python
 # From search.py
@@ -737,15 +741,6 @@ def retrieve_from_endee(
 
     formatted = _format_results(results)
 
-    # Client-side filtering for array fields
-    if genres:
-        formatted = [m for m in formatted if any(g.lower() in m["genres"].lower() for g in genres)]
-    if production_companies:
-        formatted = [
-            m for m in formatted
-            if any(pc.lower() in m.get("production_companies", "").lower() for pc in production_companies)
-        ]
-
     return formatted[:top_k]
 ```
 
@@ -781,7 +776,7 @@ def _build_context(movies: list[dict]) -> str:
     for i, m in enumerate(movies, 1):
         context_parts.append(
             f"[{i}] {m['title']} ({m.get('year', 'N/A')})\n"
-            f"    Rating: ⭐ {m.get('rating', 'N/A')}/10\n"
+            f"    Rating: {m.get('rating', 'N/A')}/10\n"
             f"    Genres: {m.get('genres', 'N/A')}\n"
             f"    Director: {m.get('director', 'N/A')}\n"
             f"    Cast: {m.get('cast', 'N/A')}\n"
@@ -832,7 +827,7 @@ The taste profile is also injected into AI explanations and RAG answers for pers
 
 ## Filter Architecture
 
-CineMatch uses a two-tier filtering strategy:
+CineMatch uses a two-tier strategy for filtering and ranking:
 
 ### Tier 1: Server-Side (Endee Native)
 
@@ -842,19 +837,23 @@ These filters run inside Endee during the vector search — results that don't m
 |---|---|---|
 | Language | `$eq` | Scalar string |
 | Movie Status | `$eq` | Scalar string |
-| Year Range | `$range` | Numeric |
+| Year Range | `$range` on `year_norm` | Numeric (normalized: year - 1900) |
 | Rating Range | `$range` | Numeric |
+| Genres | `$eq` on dynamic flags | `genre_action: "yes"`, `genre_comedy: "yes"`, etc. |
+| Production Companies | `$eq` on dynamic flags | `company_a24: "yes"`, `company_pixar: "yes"`, etc. |
 
-### Tier 2: Client-Side (Post-Retrieval)
+### Tier 2: Client-Side (Post-Retrieval Reranking)
 
-Array/complex fields that Endee's `$in` doesn't support natively on array-type filter fields are filtered after retrieval:
+After Endee returns results, a client-side **exact match reranking** step handles cases where SPLADE's subword tokenization creates false positives (e.g., "Timothée Chalamet" matching a character named "Tim"):
 
-| Filter | Method | Why Client-Side |
+| Reranking Rule | Boost | Why |
 |---|---|---|
-| Genres | Substring match on comma-separated string | Endee `$in` works on scalars, not arrays |
-| Production Companies | Substring match | Same reason |
+| Extracted person in cast/director | +1.0 | Guarantees exact name matches rank above semantic-only matches |
+| Query text in movie title | +0.10 | Rewards title relevance |
+| Query text in director field | +0.10 | Rewards director relevance |
+| Query text in keywords | +0.05 | Rewards keyword relevance |
 
-**Over-fetching strategy:** To ensure enough results survive client-side filtering, we always fetch `max(100, top_k * 5)` results from Endee and trim after filtering.
+**Over-fetching strategy:** To ensure enough results survive reranking, we always fetch `max(100, top_k * 5)` results from Endee and trim after reranking.
 
 ---
 
