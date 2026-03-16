@@ -63,23 +63,23 @@ Traditional movie search relies on exact keyword matching — users must know sp
 └─────────────────┼────────────┼────────────┼─────────────────────┘
                   │            │            │
 ┌─────────────────▼────────────▼────────────▼─────────────────────┐
-│                    CineMatch Backend (Python)                    │
-│                                                                  │
+│                    CineMatch Backend (Python)                   │
+│                                                                 │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐     │
 │  │  AI Chat    │  │  RAG Pipeline│  │  Query Intent       │     │
 │  │  (Gemini)   │  │  (Retrieve → │  │  Analysis (Gemini)  │     │
 │  │             │  │   Generate)  │  │                     │     │
 │  └──────┬──────┘  └──────┬───────┘  └──────────┬──────────┘     │
-│         │                │                     │                 │
-│  ┌──────▼────────────────▼─────────────────────▼──────────┐     │
-│  │              Embeddings Module                          │     │
-│  │   Dense: SentenceTransformer (all-MiniLM-L6-v2, 384d) │     │
-│  │   Sparse: SPLADE (naver/splade-cocondenser-ensembledistil) │ │
-│  └─────────────────────────┬──────────────────────────────┘     │
-│                            │                                     │
-└────────────────────────────┼─────────────────────────────────────┘
+│         │                │                     │                │
+│  ┌──────▼────────────────▼─────────────────────▼────────────┐   │
+│  │              Embeddings Module                           │   │
+│  │   Dense: SentenceTransformer (all-MiniLM-L6-v2, 384d)    │   │
+│  │ Sparse: SPLADE (naver/splade-cocondenser-ensembledistil) │   │
+│  └─────────────────────────┬────────────────────────────────┘   │
+│                            │                                    │
+└────────────────────────────┼────────────────────────────────────┘
                              │
-              ┌──────────────▼──────────────┐
+              ┌──────────────▼───────────────┐
               │    Endee Vector Database     │
               │                              │
               │  Index: movies_index         │
@@ -95,7 +95,7 @@ Traditional movie search relies on exact keyword matching — users must know sp
               │  • Payload filtering ($eq,   │
               │    $range, $in)              │
               │  • Metadata storage          │
-              └─────────────────────────────┘
+              └──────────────────────────────┘
 ```
 
 ### Data Flow
@@ -410,6 +410,30 @@ This project showcases multiple Endee capabilities in a real-world application:
 | **Metadata Storage** | 15+ metadata fields stored per document (title, cast, director, etc.) |
 | **Batch Upsert** | Memory-efficient chunked indexing of 5,000+ movies |
 | **Document Count** | Real-time database statistics displayed in UI |
+
+---
+
+## fixes
+ - [16-03-2026]
+   - Client side filtering for genres and production companies removed
+       - bad idea resulted in result starvation.
+       - for example searching for superhero movies with filters in the ui selected as horror.
+       - endee fetches movies that are similar to the query passed to it.
+       - genre filter were applied client side after fetching.
+       - which resulted in sometimes no result, even if there were results.
+       - the DB was doing what is was supposed to but the use of filters were flawed.
+         
+   - filtering genres and production companies server side instead
+       - changed how the data was sent to db instead of sending these as arrays.
+       - what we are doing now is flatening them into its own individual scalar fields so that the '$eq' operator can be used server side
+       - now looking for a horror film is ``{"genre_action": {"$eq": "yes"}}``
+       - there are more fields for the movie but by doing this there is no more result starvation and also we are not filtering them again after fetching the result from the DB.
+         
+   - Boosting result when specific names are asked in the query [this is done client side]
+       - when searching for specfic actors name like "drama with timothee chalamet"
+       - the tokenizer was seperating "timothee" into "tim","othee". whihc resulted in the cast that have tim in them to appear at the top while "timothee chalamet" was below
+       - to fix these used ranking to boost the result  
+  
 
 ---
 
