@@ -52,6 +52,8 @@ Traditional movie search relies on exact keyword matching — users must know sp
 
 ---
 
+
+
 ## 🏗️ System Architecture
 
 ```
@@ -348,6 +350,10 @@ CineMatch will:
 3. Run a **hybrid search** on Endee with server-side metadata filters
 4. Display results ranked by vector similarity with AI-generated explanations
 
+![Semantic Search Demo](assests/search.mp4)
+
+![Filters Demo](assests/search%20with%20filters.mp4)
+
 ### 🧠 RAG Q&A
 
 Switch to the **RAG Q&A** tab and ask questions like:
@@ -357,12 +363,16 @@ Switch to the **RAG Q&A** tab and ask questions like:
 
 The pipeline retrieves relevant movies from Endee and generates a grounded answer with `[numbered]` citations.
 
+![RAG Demo](assests/rag_compressed.mp4)
+
 ### 🟢 Letterboxd Taste Profiling
 
 1. Export your data from [Letterboxd](https://letterboxd.com/settings/data/)
 2. Upload `ratings.csv` (and optionally `reviews.csv`) in the sidebar
 3. Click **"Analyze My Taste"** — Gemini analyzes your viewing DNA
 4. Use the auto-generated search query to discover movies tailored to your palate
+
+![Taste Profile Demo](assests/letterboxd_compressed.mp4)
 
 ---
 
