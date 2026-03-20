@@ -350,9 +350,11 @@ CineMatch will:
 3. Run a **hybrid search** on Endee with server-side metadata filters
 4. Display results ranked by vector similarity with AI-generated explanations
 
-![Semantic Search Demo](assests/search.mp4)
 
-![Filters Demo](assests/search%20with%20filters.mp4)
+
+https://github.com/user-attachments/assets/467b6e68-3471-4d8e-bdf0-8a4f0579a6cb
+
+
 
 ### 🧠 RAG Q&A
 
@@ -363,7 +365,10 @@ Switch to the **RAG Q&A** tab and ask questions like:
 
 The pipeline retrieves relevant movies from Endee and generates a grounded answer with `[numbered]` citations.
 
-![RAG Demo](assests/rag_compressed.mp4)
+
+https://github.com/user-attachments/assets/ed214868-b1ba-4e34-ad95-7a68461ac0f2
+
+
 
 ### 🟢 Letterboxd Taste Profiling
 
@@ -372,7 +377,10 @@ The pipeline retrieves relevant movies from Endee and generates a grounded answe
 3. Click **"Analyze My Taste"** — Gemini analyzes your viewing DNA
 4. Use the auto-generated search query to discover movies tailored to your palate
 
-![Taste Profile Demo](assests/letterboxd_compressed.mp4)
+
+https://github.com/user-attachments/assets/432f4fdb-16a9-4a36-9b6e-7f9fa609d8a5
+
+
 
 ---
 
