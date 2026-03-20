@@ -3,6 +3,7 @@
   <img src="https://img.shields.io/badge/Gemini-2.5%20Flash-orange?style=for-the-badge&logo=google" alt="Gemini" />
   <img src="https://img.shields.io/badge/Streamlit-App-red?style=for-the-badge&logo=streamlit" alt="Streamlit" />
   <img src="https://img.shields.io/badge/Python-3.12+-blue?style=for-the-badge&logo=python" alt="Python" />
+  <img src="https://img.shields.io/badge/OpenRouter-94A3B8?style=for-the-badge&logo=openrouter" alt="OpenRouter" />
 </p>
 
 # 🎬 CineMatch — AI Movie Discovery Engine
@@ -432,7 +433,11 @@ This project showcases multiple Endee capabilities in a real-world application:
    - Boosting result when specific names are asked in the query [this is done client side]
        - when searching for specfic actors name like "drama with timothee chalamet"
        - the tokenizer was seperating "timothee" into "tim","othee". whihc resulted in the cast that have tim in them to appear at the top while "timothee chalamet" was below
-       - to fix these used ranking to boost the result  
+       - to fix these used ranking to boost the result
+
+ - [21-03-2026]
+    - added openrouter api
+    - new function in rag, added the ability to follow up a question by reformulating it with the previous and current query
   
 
 ---
