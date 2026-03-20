@@ -8,10 +8,8 @@ import io
 import os
 import re
 
-import google.generativeai as genai
-
 from config import GEMINI_MODEL
-
+from ai_chat import call_llm
 
 def parse_ratings(file_content: str) -> list[dict]:
     """Parse Letterboxd ratings.csv content."""
@@ -97,17 +95,17 @@ def build_taste_summary(
     }
 
 
-def generate_taste_profile(api_key: str, taste_summary: dict) -> str:
+def generate_taste_profile(api_key: str, taste_summary: dict, provider: str = "Gemini") -> dict:
     """
-    Use Gemini to analyze viewing history and generate a taste profile description.
+    Use AI to analyze viewing history and generate a taste profile description.
     This description is then used as a search query in Endee to find matching movies.
     """
     if not api_key:
-        return "Please provide a Gemini API Key to analyze your taste profile."
+        return {
+            "text": f"Please provide a {provider} API Key to analyze your taste profile.",
+            "model": "error"
+        }
         
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL)
-
     # Build the prompt
     loved_str = "\n".join([f"  - {m['name']} ({m['year']}) - {m['rating']}/5" for m in taste_summary["loved"]])
     disliked_str = "\n".join([f"  - {m['name']} ({m['year']}) - {m['rating']}/5" for m in taste_summary["disliked"]])
@@ -140,10 +138,12 @@ Be specific and perceptive. Reference their actual movies and reviews to support
 Then, on a new line after "SEARCH_QUERY:", write a single search query (2-3 sentences) that could be used to find movies they would love. This should capture the essence of their taste in descriptive, semantic terms."""
 
     try:
-        response = model.generate_content(prompt)
-        return response.text
+        return call_llm(api_key, prompt, system_instruction="You are a film critic and taste analyst.", provider=provider)
     except Exception as e:
-        return f"Could not generate taste profile: {e}"
+        return {
+            "text": f"Could not generate taste profile: {e}",
+            "model": "error"
+        }
 
 
 def extract_search_query(profile_text: str) -> str:
@@ -158,19 +158,21 @@ def extract_search_query(profile_text: str) -> str:
 
 def process_letterboxd_export(
     api_key: str,
+    provider: str = "Gemini",
     ratings_content: str | None = None,
     reviews_content: str | None = None,
     diary_content: str | None = None,
     watchlist_content: str | None = None,
 ) -> dict:
     """
-    Full pipeline: parse Letterboxd CSVs → summarize → Gemini taste analysis.
+    Full pipeline: parse Letterboxd CSVs → summarize → taste analysis.
 
     Returns:
         {
             "summary": raw taste summary dict,
-            "profile": Gemini-generated taste profile text,
-            "search_query": extracted search query for Endee
+            "profile": taste profile text,
+            "search_query": extracted search query for Endee,
+            "model": specific AI model used
         }
     """
     ratings = parse_ratings(ratings_content) if ratings_content else []
@@ -179,11 +181,15 @@ def process_letterboxd_export(
     watchlist = parse_watchlist(watchlist_content) if watchlist_content else []
 
     summary = build_taste_summary(ratings, reviews, diary, watchlist)
-    profile = generate_taste_profile(api_key, summary)
-    search_query = extract_search_query(profile)
+    response_data = generate_taste_profile(api_key, summary, provider=provider)
+    
+    profile_text = response_data["text"]
+    model_used = response_data["model"]
+    search_query = extract_search_query(profile_text)
 
     return {
         "summary": summary,
-        "profile": profile,
+        "profile": profile_text,
         "search_query": search_query,
+        "model": model_used
     }

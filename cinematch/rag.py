@@ -6,13 +6,13 @@ via hybrid vector search, and generates a grounded answer with citations
 using Gemini.
 """
 
-import google.generativeai as genai
 import time
 
-from config import GEMINI_MODEL, ENDEE_URL, ENDEE_INDEX_NAME
+from config import ENDEE_URL, ENDEE_INDEX_NAME
 from embeddings import embed_text, get_sparse_embedding
 from search import _format_results
 from endee import Endee
+from ai_chat import call_llm
 
 RAG_SYSTEM_PROMPT = """You are CineMatch RAG, a movie expert that ONLY answers 
 based on retrieved movie data. You must NEVER invent or hallucinate information.
@@ -165,9 +165,58 @@ def _build_context(movies: list[dict]) -> str:
     return "\n\n".join(context_parts)
 
 
+def reformulate_rag_query(
+    api_key: str,
+    question: str,
+    history: list[dict] | None = None,
+    provider: str = "Gemini"
+) -> str:
+    """
+    Reformulate a follow-up question into a standalone, descriptive search query.
+    If no history is provided or it's not a follow-up, returns the original question.
+    """
+    if not history:
+        return question
+
+    # Build history context for the LLM
+    context = ""
+    for entry in history[-3:]: # Limit to last 3 turns for context
+        context += f"User: {entry['question']}\nAI: {entry['answer'][:200]}...\n"
+
+    prompt = f"""Given the following conversation history and a new follow-up question, 
+reformulate the question into a SINGLE standalone search query that can be used to find movies 
+in a vector database. 
+
+The standalone query should:
+1. Be descriptive and capture the full intent (including context from history).
+2. Avoid pronouns like "them", "those", "that" — replace them with specific movie names or themes from the history.
+3. Focus on the vibe, genre, or specific details the user is now looking for.
+
+CONVERSATION HISTORY:
+{context}
+
+FOLLOW-UP QUESTION:
+"{question}"
+
+STANDALONE QUERY:"""
+
+    try:
+        response_data = call_llm(
+            api_key, 
+            prompt, 
+            system_instruction="You are a search query optimizer. Return ONLY the reformulated query text.", 
+            provider=provider
+        )
+        return response_data["text"].strip().strip('"')
+    except Exception:
+        return question
+
+
 def rag_answer(
     api_key: str,
     question: str,
+    provider: str = "Gemini",
+    history: list[dict] | None = None,
     genres: list[str] | None = None,
     min_year: int | None = None,
     max_year: int | None = None,
@@ -180,32 +229,32 @@ def rag_answer(
     top_k: int = 8,
 ) -> dict:
     """
-    Full RAG pipeline: Retrieve from Endee → Generate grounded answer with Gemini.
+    Full RAG pipeline with query reformulation: 
+    Reformulate → Retrieve from Endee → Generate grounded answer with LLM.
 
     Args:
-        api_key: User's Gemini API key.
-        question: Natural language question.
+        api_key: User's AI API key.
+        question: Natural language question (could be a follow-up).
+        provider: AI provider (Gemini or OpenRouter Free).
+        history: Previous RAG conversation history.
         taste_profile: Optional taste profile description text.
         taste_search_query: Optional taste-based semantic query.
         top_k: Number of movies to retrieve for context.
-
-    Returns:
-        {
-            "answer": str,          # Gemini's grounded answer with citations
-            "retrieved_movies": [],  # Movies used as context
-            "num_retrieved": int,    # Number of movies retrieved
-        }
     """
     if not api_key:
         return {
-            "answer": "Please provide your Gemini API key in the sidebar to use RAG Q&A.",
+            "answer": f"Please provide your {provider} API key in the sidebar to use RAG Q&A.",
             "retrieved_movies": [],
             "num_retrieved": 0,
         }
 
-    # Step 1: Retrieve relevant movies from Endee (personalized if taste query exists)
+    # Step 1: Reformulate query if there is history
+    standalone_query = reformulate_rag_query(api_key, question, history, provider)
+    print(f"   Reformulated Query: '{standalone_query}'")
+
+    # Step 2: Retrieve relevant movies from Endee using reformulated query
     retrieved = retrieve_from_endee(
-        question, 
+        standalone_query, 
         genres=genres,
         min_year=min_year,
         max_year=max_year,
@@ -224,21 +273,22 @@ def rag_answer(
             "num_retrieved": 0,
         }
 
-    # Step 2: Build structured context from retrieved movies
+    # Step 3: Build structured context from retrieved movies
     context = _build_context(retrieved)
 
-    # Step 3: Generate grounded answer with Gemini
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        GEMINI_MODEL,
-        system_instruction=RAG_SYSTEM_PROMPT,
-    )
+    # Step 4: Generate grounded answer
+    history_context = ""
+    if history:
+        history_context = "\nCONVERSATION HISTORY:\n"
+        for entry in history[-3:]:
+            history_context += f"User: {entry['question']}\nAI: {entry['answer'][:300]}...\n"
 
     taste_context = ""
     if taste_profile:
         taste_context = f"\nUser's Taste Profile (from Letterboxd):\n{taste_profile}\n---\n"
 
-    prompt = f"""{taste_context}User Question: "{question}"
+    prompt = f"""{taste_context}{history_context}
+CURRENT QUESTION: "{question}"
 
 Retrieved Movies from Endee Vector Database (ranked by semantic similarity):
 
@@ -246,19 +296,23 @@ Retrieved Movies from Endee Vector Database (ranked by semantic similarity):
 
 ---
 
-Using ONLY the retrieved movies above, answer the user's question.
+Using ONLY the retrieved movies above, answer the current question. 
+If the question is a follow-up, use the history for context but prioritize answering the new question.
 Cite movies by their [number] reference (e.g., [1], [2]).
-Explain WHY each recommended movie fits the question and, if a Taste Profile is provided, why it fits the user's personal taste.
-If the retrieved movies don't perfectly match, be honest and suggest refining the query."""
+Explain WHY each recommended movie fits the question."""
 
     try:
-        response = model.generate_content(prompt)
-        answer = response.text
+        response_data = call_llm(api_key, prompt, system_instruction=RAG_SYSTEM_PROMPT, provider=provider)
+        answer = response_data["text"]
+        model_used = response_data["model"]
     except Exception as e:
         answer = f"Error generating answer: {e}"
+        model_used = "error"
 
     return {
         "answer": answer,
         "retrieved_movies": retrieved,
         "num_retrieved": len(retrieved),
+        "standalone_query": standalone_query,
+        "model": model_used
     }

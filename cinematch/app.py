@@ -14,9 +14,10 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 
 from search import search_with_filters, find_similar_by_text, get_db_stats
-from ai_chat import explain_recommendations, get_chat_session, chat_followup, analyze_query_intent
+from ai_chat import explain_recommendations, chat_followup, analyze_query_intent
 from taste_profile import process_letterboxd_export
 from rag import rag_answer
+from config import GEMINI_API_KEY, OPENROUTER_API_KEY
 
 # ============================================================================
 # PAGE CONFIG
@@ -43,7 +44,11 @@ if "current_query" not in st.session_state:
 if "search_time" not in st.session_state:
     st.session_state.search_time = 0.0
 if "gemini_key" not in st.session_state:
-    st.session_state.gemini_key = ""
+    st.session_state.gemini_key = GEMINI_API_KEY
+if "openrouter_key" not in st.session_state:
+    st.session_state.openrouter_key = OPENROUTER_API_KEY
+if "ai_provider" not in st.session_state:
+    st.session_state.ai_provider = "Gemini"
 if "rag_history" not in st.session_state:
     st.session_state.rag_history = []
 
@@ -52,20 +57,59 @@ if "rag_history" not in st.session_state:
 # SIDEBAR — FILTERS + LETTERBOXD
 # ============================================================================
 with st.sidebar:
-    st.header("🔑 API Keys")
-    gemini_input = st.text_input(
-        "Gemini API Key",
-        value=st.session_state.gemini_key,
-        type="password",
-        placeholder="AIzaSy...",
-        help="Required for AI explanations and taste analysis. Get yours at https://aistudio.google.com/app/apikey"
+    st.header("🔑 AI Settings")
+    
+    ai_provider = st.radio(
+        "AI Provider",
+        ["Gemini", "OpenRouter Free"],
+        index=0 if st.session_state.ai_provider == "Gemini" else 1,
+        help="Choose which AI service to use for explanations and RAG."
     )
-    if gemini_input != st.session_state.gemini_key:
-        st.session_state.gemini_key = gemini_input
+    
+    if ai_provider != st.session_state.ai_provider:
+        st.session_state.ai_provider = ai_provider
         st.rerun()
-        
-    if not st.session_state.gemini_key:
-        st.warning("Please provide a Gemini API Key to unlock AI features.")
+
+    if ai_provider == "Gemini":
+        if st.session_state.gemini_key:
+            st.success("✅ Gemini API Key loaded from .env")
+            if st.button("✏️ Change Key", key="change_gemini"):
+                st.session_state.gemini_key = ""
+                st.rerun()
+            api_key_to_use = st.session_state.gemini_key
+        else:
+            gemini_input = st.text_input(
+                "Gemini API Key",
+                value="",
+                type="password",
+                placeholder="AIzaSy...",
+                help="Get yours at https://aistudio.google.com/app/apikey"
+            )
+            if gemini_input:
+                st.session_state.gemini_key = gemini_input
+                st.rerun()
+            st.warning("Please provide a Gemini API Key.")
+            api_key_to_use = None
+    else:
+        if st.session_state.openrouter_key:
+            st.success("✅ OpenRouter API Key loaded from .env")
+            if st.button("✏️ Change Key", key="change_or"):
+                st.session_state.openrouter_key = ""
+                st.rerun()
+            api_key_to_use = st.session_state.openrouter_key
+        else:
+            or_input = st.text_input(
+                "OpenRouter API Key",
+                value="",
+                type="password",
+                placeholder="sk-or-v1-...",
+                help="Get yours at https://openrouter.ai/keys"
+            )
+            if or_input:
+                st.session_state.openrouter_key = or_input
+                st.rerun()
+            st.warning("Please provide an OpenRouter API Key.")
+            api_key_to_use = None
         
     st.divider()
     
@@ -107,18 +151,22 @@ with st.sidebar:
 
     if st.button("🧠 Analyze My Taste", width="stretch"):
         if ratings_file:
-            with st.spinner("Analyzing your taste with Gemini..."):
-                if not st.session_state.gemini_key:
-                    st.error("Gemini API Key is required for Taste Analysis.")
+            with st.spinner(f"Analyzing your taste with {st.session_state.ai_provider}..."):
+                if not api_key_to_use:
+                    st.error(f"{st.session_state.ai_provider} API Key is required for Taste Analysis.")
                 else:
                     result = process_letterboxd_export(
-                        api_key=st.session_state.gemini_key,
+                        api_key=api_key_to_use,
+                        provider=st.session_state.ai_provider,
                         ratings_content=ratings_file.getvalue().decode("utf-8") if ratings_file else None,
                         reviews_content=reviews_file.getvalue().decode("utf-8") if reviews_file else None
                     )
                     st.session_state.taste_profile = result["profile"]
                     st.session_state.taste_search_query = result["search_query"]
+                    st.session_state.taste_model = result.get("model")
             st.success("✅ Taste profile generated!")
+            if st.session_state.get("taste_model"):
+                st.caption(f"🤖 Analyzed by: `{st.session_state.taste_model}`")
         else:
             st.warning("Please upload at least ratings.csv")
 
@@ -167,9 +215,9 @@ with tab_search:
         # 1. AI Intent Analysis (if API key is present)
         ai_filters = {}
         search_query_text = query
-        if st.session_state.gemini_key:
-            with st.spinner("Extracting filters from query (AI)..."):
-                ai_filters = analyze_query_intent(st.session_state.gemini_key, query)
+        if api_key_to_use:
+            with st.spinner(f"Extracting filters from query ({st.session_state.ai_provider})..."):
+                ai_filters = analyze_query_intent(api_key_to_use, query, provider=st.session_state.ai_provider)
                 # Always use the original query for Endee — preserves the full vibe
                 search_query_text = query
                 
@@ -222,25 +270,31 @@ with tab_search:
                 st.session_state.search_time = 0.0
 
         if st.session_state.search_results:
-            if st.session_state.gemini_key:
-                with st.spinner("Gemini is explaining the picks..."):
+            if api_key_to_use:
+                with st.spinner(f"{st.session_state.ai_provider} is explaining the picks..."):
                     try:
-                        ai_resp = explain_recommendations(
-                            api_key=st.session_state.gemini_key,
+                        ai_data = explain_recommendations(
+                            api_key=api_key_to_use,
+                            provider=st.session_state.ai_provider,
                             query=query,
                             movies=st.session_state.search_results,
                             taste_profile=st.session_state.taste_profile,
                         )
-                        st.session_state.ai_response = ai_resp
+                        st.session_state.ai_response = ai_data["text"]
+                        st.session_state.ai_model = ai_data.get("model")
                     except Exception as e:
                         st.session_state.ai_response = f"AI analysis unavailable: {e}"
+                        st.session_state.ai_model = None
             else:
-                st.session_state.ai_response = "*(AI explanations disabled — add your Gemini API Key in the sidebar)*"
+                st.session_state.ai_response = f"*(AI explanations disabled — add your {st.session_state.ai_provider} API Key in the sidebar)*"
+                st.session_state.ai_model = None
 
     # --- AI Response ---
     if st.session_state.ai_response:
         st.subheader("AI Picks for You")
         st.info(st.session_state.ai_response)
+        if st.session_state.get("ai_model"):
+            st.caption(f"🤖 Powered by: `{st.session_state.ai_model}`")
 
     # --- Search Results Grid ---
     if st.session_state.search_results:
@@ -297,17 +351,20 @@ with tab_search:
                 st.write(followup)
                 
             with st.chat_message("assistant"):
-                if not st.session_state.gemini_key:
-                    st.warning("Please add your Gemini API Key in the sidebar to chat.")
+                if not api_key_to_use:
+                    st.warning(f"Please add your {st.session_state.ai_provider} API Key in the sidebar to chat.")
                 else:
                     with st.spinner("Thinking..."):
-                        response = chat_followup(
-                            api_key=st.session_state.gemini_key,
+                        ai_data = chat_followup(
+                            api_key=api_key_to_use,
+                            provider=st.session_state.ai_provider,
                             message=followup,
                             movies_context=st.session_state.search_results,
                             taste_profile=st.session_state.taste_profile,
                         )
-                        st.write(response)
+                        st.write(ai_data["text"])
+                        if ai_data.get("model"):
+                            st.caption(f"🤖 Model: `{ai_data['model']}`")
 
     # --- Empty State ---
     if not st.session_state.search_results and not st.session_state.ai_response:
@@ -337,6 +394,10 @@ with tab_rag:
             st.write(entry["question"])
         with st.chat_message("assistant"):
             st.markdown(entry["answer"])
+            if entry.get("model"):
+                st.caption(f"🤖 Model: `{entry['model']}`")
+            if entry.get("standalone_query") and entry["standalone_query"] != entry["question"]:
+                st.caption(f"🔍 **AI Reformulated Search:** {entry['standalone_query']}")
             with st.expander(f"📚 Retrieved Context ({entry['num_retrieved']} movies)"):
                 for i, m in enumerate(entry["retrieved_movies"], 1):
                     st.markdown(
@@ -356,13 +417,15 @@ with tab_rag:
             st.write(rag_question)
 
         with st.chat_message("assistant"):
-            if not st.session_state.gemini_key:
-                st.warning("Please add your Gemini API Key in the sidebar to use RAG Q&A.")
+            if not api_key_to_use:
+                st.warning(f"Please add your {st.session_state.ai_provider} API Key in the sidebar to use RAG Q&A.")
             else:
-                with st.spinner("🔎 Retrieving from Endee & generating answer..."):
+                with st.spinner(f"🔎 Retrieving from Endee & generating answer ({st.session_state.ai_provider})..."):
                     result = rag_answer(
-                        api_key=st.session_state.gemini_key,
+                        api_key=api_key_to_use,
+                        provider=st.session_state.ai_provider,
                         question=rag_question,
+                        history=st.session_state.rag_history,
                         genres=selected_genres if selected_genres else None,
                         min_year=min_year if min_year > 1900 else None,
                         max_year=max_year if max_year < 2026 else None,
@@ -375,6 +438,9 @@ with tab_rag:
                         top_k=8,
                     )
                 st.markdown(result["answer"])
+
+                if result.get("standalone_query") and result["standalone_query"] != rag_question:
+                    st.caption(f"🔍 **AI Reformulated Search:** {result['standalone_query']}")
 
                 if result["retrieved_movies"]:
                     with st.expander(f"📚 Retrieved Context ({result['num_retrieved']} movies)"):
@@ -391,6 +457,8 @@ with tab_rag:
                     "answer": result["answer"],
                     "retrieved_movies": result["retrieved_movies"],
                     "num_retrieved": result["num_retrieved"],
+                    "standalone_query": result.get("standalone_query"),
+                    "model": result.get("model")
                 })
 
     # Empty state

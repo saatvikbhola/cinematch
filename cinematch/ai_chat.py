@@ -1,8 +1,9 @@
-"""CineMatch AI Chat — Gemini 2.5 Pro powered conversational movie assistant."""
-
 import google.generativeai as genai
+import litellm
+import json
+import os
 
-from config import GEMINI_MODEL
+from config import GEMINI_MODEL, OPENROUTER_BASE_URL, OPENROUTER_DEFAULT_MODEL
 
 # System prompt for the movie assistant
 SYSTEM_PROMPT = """You are CineMatch AI, a passionate and knowledgeable film expert. You help users discover movies from our curated database.
@@ -29,47 +30,72 @@ When analyzing taste profiles:
 CRITICAL RULE: You MUST ONLY recommend and discuss movies from the search results provided to you. NEVER suggest, mention, or recommend movies that are not in the provided search results. If the results don't match the user's request well, be honest about it — say the database didn't have a great match — but do NOT invent or add your own movie suggestions. Our database is the single source of truth."""
 
 
-def get_chat_session(api_key: str, history: list[dict] | None = None):
-    """Create or resume a Gemini chat session."""
+def call_llm(
+    api_key: str,
+    prompt: str,
+    system_instruction: str = SYSTEM_PROMPT,
+    provider: str = "Gemini",
+    history: list[dict] | None = None,
+) -> dict:
+    """Unified LLM caller for Gemini and OpenRouter using LiteLLM."""
     if not api_key:
-        raise ValueError("Gemini API key is required")
-        
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-    )
+        raise ValueError(f"{provider} API key is required")
 
-    if history:
-        return model.start_chat(history=history)
-    return model.start_chat()
+    if provider == "Gemini":
+        genai.configure(api_key=api_key)
+        model_name = GEMINI_MODEL
+        model = genai.GenerativeModel(
+            model_name,
+            system_instruction=system_instruction,
+        )
+        
+        gemini_history = []
+        if history:
+            for msg in history:
+                role = "user" if msg["role"] == "user" else "model"
+                gemini_history.append({"role": role, "parts": [msg["content"]]})
+        
+        chat = model.start_chat(history=gemini_history)
+        response = chat.send_message(prompt)
+        return {"text": response.text, "model": model_name}
+
+    elif provider == "OpenRouter Free":
+        # Set OpenRouter API key for LiteLLM
+        os.environ["OPENROUTER_API_KEY"] = api_key
+        
+        messages = [{"role": "system", "content": system_instruction}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+        
+        try:
+            response = litellm.completion(
+                model=f"openrouter/{OPENROUTER_DEFAULT_MODEL}",
+                messages=messages,
+                base_url=OPENROUTER_BASE_URL,
+            )
+            
+            # LiteLLM returns the specific model in response.model
+            model_used = response.get("model", OPENROUTER_DEFAULT_MODEL)
+            content = response.choices[0].message.content
+            
+            return {"text": content, "model": model_used}
+        except Exception as e:
+            raise Exception(f"LiteLLM/OpenRouter Error: {e}")
+    
+    else:
+        raise ValueError(f"Unsupported provider: {provider}")
 
 
 def explain_recommendations(
     api_key: str,
     query: str,
     movies: list[dict],
+    provider: str = "Gemini",
     taste_profile: str | None = None,
     chat_history: list | None = None,
 ) -> str:
-    """
-    Generate AI explanation for why these movies match the user's query.
-
-    Args:
-        api_key: User's Gemini API key
-        query: The user's original search query
-        movies: List of movie dicts from Endee search results
-        taste_profile: Optional user taste profile from Letterboxd
-        chat_history: Previous chat messages for context
-
-    Returns:
-        Gemini-generated explanation/recommendation text
-    """
-    try:
-        chat = get_chat_session(api_key, chat_history)
-    except ValueError as e:
-        return f"Please set your Gemini API Key in the sidebar to get AI recommendations."
-
+    """Generate AI explanation for why these movies match the user's query."""
     # Build movie context
     movie_context = ""
     for i, m in enumerate(movies[:8], 1):
@@ -99,37 +125,21 @@ The user's taste profile (from their Letterboxd history):
 Based on these search results and the user's query, give a conversational recommendation. Highlight the top 3-5 picks and explain why each matches what they're looking for. Be concise and engaging."""
 
     try:
-        response = chat.send_message(prompt)
-        return response.text
+        response_data = call_llm(api_key, prompt, provider=provider, history=chat_history)
+        return response_data # Returns dict with 'text' and 'model'
     except Exception as e:
-        return f"Hmm, I couldn't generate recommendations right now. Error: {e}"
+        return {"text": f"Hmm, I couldn't generate recommendations right now. Error: {e}", "model": "error"}
 
 
 def chat_followup(
     api_key: str,
     message: str,
+    provider: str = "Gemini",
     movies_context: list[dict] | None = None,
     taste_profile: str | None = None,
     chat_history: list | None = None,
 ) -> str:
-    """
-    Handle follow-up chat messages for refining recommendations.
-
-    Args:
-        api_key: User's Gemini API key
-        message: User's follow-up message
-        movies_context: Current movie results for reference
-        taste_profile: Optional taste profile
-        chat_history: Previous chat messages
-
-    Returns:
-        Gemini response
-    """
-    try:
-        chat = get_chat_session(api_key, chat_history)
-    except ValueError as e:
-        return "Please set your Gemini API Key in the sidebar first."
-
+    """Handle follow-up chat messages for refining recommendations."""
     prompt = message
 
     if movies_context:
@@ -145,31 +155,17 @@ User's message: {message}
 Respond naturally. You may ONLY discuss the movies listed above — do NOT suggest any movies outside this list. If they want different results, suggest refining their search query or adjusting filters. If they ask about a specific movie from the list, give details."""
 
     try:
-        response = chat.send_message(prompt)
-        return response.text
+        response_data = call_llm(api_key, prompt, provider=provider, history=chat_history)
+        return response_data
     except Exception as e:
-        return f"Sorry, I hit an issue: {e}"
+        return {"text": f"Sorry, I hit an issue: {e}", "model": "error"}
 
 
-def analyze_query_intent(api_key: str, query: str) -> dict:
-    """
-    Use Gemini to understand user's search intent and extract filters.
-
-    Returns:
-        {
-            "refined_query": "semantic search text",
-            "genres": ["Action", "Thriller"],
-            "min_year": 2000,
-            "min_rating": 7.0,
-            ...
-        }
-    """
+def analyze_query_intent(api_key: str, query: str, provider: str = "Gemini") -> dict:
+    """Use AI to understand user's search intent and extract filters."""
     if not api_key:
         return {"refined_query": query}
         
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL)
-
     prompt = f"""Analyze this movie search query and extract structured information.
 
 Query: "{query}"
@@ -198,13 +194,17 @@ Return a JSON object with these fields (omit fields that aren't mentioned or imp
 Return ONLY valid JSON, no markdown formatting or explanation."""
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
+        response_data = call_llm(api_key, prompt, provider=provider, system_instruction="You are a JSON generator. Return ONLY valid JSON.")
+        text = response_data["text"].strip()
         # Clean markdown code blocks if present
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+        if text.startswith("json"):
+            text = text[4:].strip()
 
-        import json
-        return json.loads(text)
+        # We return the model along with refined info
+        result = json.loads(text)
+        result["_model"] = response_data["model"]
+        return result
     except Exception:
         return {"refined_query": query}

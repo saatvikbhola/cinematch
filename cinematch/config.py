@@ -26,7 +26,13 @@ SPACE_TYPE = "cosine"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # --- Gemini ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
+
+# --- OpenRouter ---
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_DEFAULT_MODEL = "openrouter/auto:free"
 
 # --- Data ---
 MOVIES_TO_FETCH = 5000  # Total movies to pull from TMDb
